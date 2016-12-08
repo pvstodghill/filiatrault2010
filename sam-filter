@@ -1,0 +1,173 @@
+#! /usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Getopt::Std;
+
+our $opt_P = 0;
+our $opt_U = 0;
+our $opt_h;
+our $opt_p = 0;
+our $opt_r = 0;
+our $opt_s;
+our $opt_u = 0;
+
+if (!getopts("hpPrs:uU")) {
+  usage(1);
+}
+if ($opt_h) {
+  usage(0);
+}
+if ($opt_U + $opt_r + $opt_u != 1) {
+  # exactly one of -U, -r and -u must be specified
+  usage(1);
+}
+if ( $opt_p && $opt_P ) {
+  usage(1);
+}
+
+sub usage {
+  print STDERR "Usage: $0 options [-u | -r | -U] < sorted.sam > filtered.sam\n";
+  print STDERR "-h - this message\n";
+  print STDERR "-p - keep only perfect alignments\n";
+  print STDERR "-P - keep only imperfect alignments\n";
+  print STDERR "-r - keep only one randomly chosen alignment\n";
+  print STDERR "-s SEED - seed to use for -r\n";
+  print STDERR "-u - keep reads that align uniquely\n";
+  print STDERR "-U - keep only unaligned reads\n";
+  exit(@_);
+}
+
+if ( defined($opt_s) ) {
+  srand($opt_s);
+}
+
+my $cur_qname;
+my @cur_reads;
+
+while (<STDIN>) {
+  if (/^@/) {
+    print;
+    next;
+  }
+  my ($qname) = split(/\t/);
+  if (defined($cur_qname) && $qname eq $cur_qname) {
+    push @cur_reads, $_;
+  } else {
+    emit(@cur_reads);
+    $cur_qname = $qname;
+    @cur_reads = ($_);
+  }
+}
+emit(@cur_reads);
+
+sub emit {
+  if ( $#_ == -1 ) {
+    # No hits. Maybe empty file? Who cares, do nothing.
+    return;
+  }
+
+  my $num_reads = $#_ + 1;
+
+  my $num_unaligned = 0;
+  my $num_aligned = 0;
+  my @perfect = ();
+  my @imperfect = ();
+  my $min_mapq;
+  my $max_mapq;
+  foreach my $l ( @_ ) {
+    my ($qname,$flag,$rname,$pos,$mapq,$cigar) = split(/\t/,$l);
+    if ( !defined($min_mapq) || $mapq < $min_mapq ) {
+      $min_mapq = $mapq;
+    }
+    if ( !defined($max_mapq) || $mapq > $max_mapq ) {
+      $max_mapq = $mapq;
+    }
+    if ( $cigar =~ /^[0-9]+M$/ ) {
+      push @perfect, $l;
+    } else {
+      push @imperfect, $l;
+    }
+    if ( $flag & 0x4 ) {
+      $num_unaligned++;
+    } else {
+      $num_aligned++;
+    }
+  }
+  my $num_perfect = $#perfect + 1;
+  my $num_imperfect = $#imperfect + 1;
+
+  # sanity checks
+  ( ( $num_unaligned == 1 && $num_aligned == 0 )
+    || ( $num_unaligned == 0 && $num_aligned > 0 ) ) 
+    || xdie("num_unaligned=$num_unaligned; num_aligned=$num_aligned\n",@_);
+  ( $num_aligned == 0 || $min_mapq == $max_mapq )
+    || xdie("min_mapq=$min_mapq; max_mapq=$max_mapq\n",@_);
+
+  if ( $opt_U ) {
+    # -U - print unaligned reads
+    if ( $num_unaligned ) {
+      print $_[0];
+    }
+  } elsif ( $opt_u ) {
+    # -u - print unique alignments only
+    if ( $num_aligned != 1 ) {
+      # Either zero or more than one alignments. Ignore them.
+    } elsif ( $opt_p && $num_imperfect == 1 ) {
+      # -p, so don't print imperfect alignments
+    } elsif ( $opt_P && $num_perfect == 1 ) {
+      # -P, so don't print perfect alignments
+    } elsif ( $_[0] =~ /\tXS:i:([0-9-]+)/ ) {
+      # Score for second alignment is present. Must be output from
+      # Bowtie and an ambiguous read. Compare the score of this read
+      # to the next read that Bowtie found.
+      my $next_score = $1;
+      ( $_[0] =~ /\tAS:i:([0-9-]+)/ ) || die;
+      my $this_score = $1;
+      if ( $this_score > $next_score ) {
+	# The score for this read is better than the next read. Treat
+	# this as a unique hit.
+	print $_[0];
+      } else {
+	# Next hit is as good as this hit. Genuine ambiguous
+	# alignment. Ignore it.
+      }
+    } else {
+      print $_[0];
+    }
+  } elsif ( $opt_r ) {
+    # -r - print random alignment
+    if ( $num_aligned >= 1 ) {
+      # This code is strange. It accomodates the fact that bowtie2
+      # will generate both perfect and imperfect alignments and give
+      # them both the same MAPQ score (-k and -a). I think that it is
+      # best not to use data that contains both types of alignments.
+      # ( $num_perfect > 0 && $num_imperfect == 0 )
+      # 	|| ( $num_perfect == 0 && $num_imperfect > 0 )
+      # 	  || die;
+      my @l;
+      if ( $opt_p ) {
+	@l = @perfect;
+      } elsif ( $opt_P ) {
+	@l = @imperfect;
+      } else {
+	@l = @_;
+      }
+      if ( $#l + 1 > 0 ) {
+	my $i = int(rand($#l + 1));
+	print $l[$i];
+      }
+    }
+  }
+}
+
+sub xdie {
+  my ($msg,@reads) = @_;
+  print STDERR "------------------------------------------------------------------------\n";
+  print STDERR $msg;
+  foreach my $read (@reads) {
+    print $read;
+  }
+  die;
+}
