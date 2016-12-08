@@ -1,5 +1,7 @@
 #! /bin/bash
 
+DIR=`dirname $0`
+
 if [ -z "$1" ] ; then
     echo Usage: $0 PROFILE PROFILE ...
     exit 1
@@ -7,6 +9,6 @@ fi
 
 for f in "$@" ; do
     ff=`dirname $f`/`basename $f .profile`
-    echo + profile2plot $ff.profile '>' $ff.png
-    profile2plot $ff.profile > $ff.png
+    echo + $DIR/profile2plot $ff.profile '>' $ff.png
+    $DIR/profile2plot $ff.profile > $ff.png
 done
