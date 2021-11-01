@@ -30,7 +30,7 @@ if [ -z "$1" ] ; then
 fi
 
 if [ -z "$OPT_T" ] ; then
-    OPT_T="$1"
+    OPT_T="$(basename "$1" | sed -e 's/_/\\_/g')"
 fi
 
 T=${TMP:-/tmp}/profile2plot.$$
@@ -69,7 +69,7 @@ set notitle
 EOF
 else
     cat >>$T.gnuplot  <<EOF
-set title "$OPT_T"
+set title '$OPT_T'
 EOF
 fi
 cat >>$T.gnuplot  <<EOF
